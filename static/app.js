@@ -472,6 +472,7 @@ async function askQuestion() {
   let rafId = null;
   let started = false;
   let sources = [];
+  let sourcesShown = false;
   let done = false;
   let available = true;
 
@@ -535,7 +536,10 @@ async function askQuestion() {
           if (available && !started) textEl.textContent = "Generating answer…";
         } else if (event.type === "sources") {
           sources = event.sources || [];
-          renderSources(content, sources, msgSeq);
+          if (!sourcesShown) {
+            sourcesShown = true;
+            renderSources(content, sources, msgSeq);
+          }
         } else if (event.type === "error") {
           bubble.classList.remove("typing");
           bubble.innerHTML = `<span class="error">Error: ${escapeHtml(event.message)}</span>`;
