@@ -90,8 +90,9 @@ class ApiClient:
             try:
                 return self._post("/embeddings", body)
             except OpenRouterError as exc:
-                if exc.status == 429 and attempt < 5:
-                    time.sleep(2**attempt * 1.5)  # exponential backoff on rate limit
+                if exc.status in {429, 500, 502, 503} and attempt < 5:
+                    # rate limit or transient provider hiccup: back off and retry
+                    time.sleep(2**attempt * 1.5)
                     continue
                 if exc.status in {400, 422} and sent_input_type:
                     sent_input_type = False  # provider rejects input_type; retry without it

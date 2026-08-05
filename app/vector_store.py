@@ -1,12 +1,15 @@
 """Qdrant vector store wrapper (Qdrant Cloud free tier or local Docker)."""
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass
 
 from qdrant_client import QdrantClient, models
 
 from .config import settings
+
+_MAX_UPSERT_ATTEMPTS = 5
 
 
 class VectorStoreError(Exception):
@@ -33,7 +36,11 @@ class VectorStore:
                 "QDRANT_URL is not set. Create a free cluster at https://cloud.qdrant.io "
                 "(or run Qdrant locally via Docker and set QDRANT_URL=http://localhost:6333)."
             )
-        self._client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None)
+        self._client = QdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key or None,
+            timeout=180,  # free-tier clusters are slow; writes can take a while
+        )
         self._collection = settings.qdrant_collection
 
     def ensure_collection(self) -> None:
@@ -63,7 +70,14 @@ class VectorStore:
         total = 0
         for i in range(0, len(points), batch_size):
             batch = points[i : i + batch_size]
-            self._client.upsert(collection_name=self._collection, points=batch)
+            for attempt in range(1, _MAX_UPSERT_ATTEMPTS + 1):
+                try:
+                    self._client.upsert(collection_name=self._collection, points=batch)
+                    break
+                except Exception:
+                    if attempt == _MAX_UPSERT_ATTEMPTS:
+                        raise
+                    time.sleep(10 * attempt)
             total += len(batch)
         return total
 
