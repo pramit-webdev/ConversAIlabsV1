@@ -42,7 +42,7 @@ class Settings:
         self.qdrant_collection: str = os.getenv("QDRANT_COLLECTION", "pdf_rag")
 
         # Retrieval
-        self.retrieval_top_k: int = int(os.getenv("RETRIEVAL_TOP_K", "5"))
+        self.retrieval_top_k: int = int(os.getenv("RETRIEVAL_TOP_K", "8"))
         self.retrieval_score_threshold: float = float(os.getenv("RETRIEVAL_SCORE_THRESHOLD", "0.30"))
 
         # Chunking (word counts)

@@ -5,12 +5,17 @@ accurate citations.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from io import BytesIO
 
 from pypdf import PdfReader
 
 from .config import settings
+
+# Manupatra watermark lines (e.g. "Copyright @ Manupatra 2024-2025 Page 3530")
+# add no content and pollute retrieval, so they are stripped from page text.
+_WATERMARK_RE = re.compile(r"^\s*Copyright\s*@\s*Manupatra.*\bPage\s+\d+\s*\.?\s*$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -22,11 +27,13 @@ class Chunk:
 
 
 def extract_page_text(pdf_bytes: bytes) -> list[str]:
-    """Return one string per page of the PDF."""
+    """Return one string per page of the PDF, watermark lines removed."""
     reader = PdfReader(BytesIO(pdf_bytes))
     pages: list[str] = []
     for page in reader.pages:
-        pages.append((page.extract_text() or "").strip())
+        raw = page.extract_text() or ""
+        cleaned = "\n".join(line for line in raw.splitlines() if not _WATERMARK_RE.match(line))
+        pages.append(cleaned.strip())
     return pages
 
 
