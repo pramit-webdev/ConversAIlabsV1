@@ -28,7 +28,7 @@ class Settings:
                 llm_api_key = os.getenv("EMBEDDING_API_KEY", "").strip()
             llm_api_key = llm_api_key or os.getenv("OPENROUTER_API_KEY", "").strip()
         self.llm_api_key: str = llm_api_key
-        self.llm_model: str = os.getenv("LLM_MODEL", "").strip() or "minimaxai/minimax-m3"
+        self.llm_model: str = os.getenv("LLM_MODEL", "").strip() or "nvidia/nemotron-nano-3-30b-a3b"
         self.llm_fallback_models: list[str] = _csv(os.getenv("LLM_FALLBACK_MODELS", ""))
         # Cross-provider fallback (e.g. NVIDIA free chat) used when every
         # configured model is unavailable; reuses the embedding API key unless
