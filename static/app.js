@@ -162,8 +162,8 @@ function renderThread(thread) {
   for (const item of thread.messages) {
     msgSeq += 1;
     if (item.role === "user") {
-      const { body } = addMessage("user");
-      body.textContent = item.text;
+      const { content } = addMessage("user");
+      content.textContent = item.text;
     } else if (item.role === "assistant") {
       const { content } = addMessage("assistant");
       if (item.available) {
