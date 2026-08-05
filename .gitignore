@@ -5,3 +5,4 @@ __pycache__/
 data/pdfs/*
 !data/pdfs/.gitkeep
 *.log
+Sample_Employee_Handbook.pdf
