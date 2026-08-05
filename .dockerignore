@@ -1,0 +1,11 @@
+.env
+.venv
+__pycache__
+*.pyc
+.git
+data
+*.log
+DEMO_QUESTIONS.txt
+DEMO_GUIDELINE.md
+DEMO_GUIDE.md
+Sample_Employee_Handbook.pdf
