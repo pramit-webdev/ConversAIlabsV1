@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ConversAIlabs — PDF RAG Assistant</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>PDF RAG Assistant</h1>
+      <p class="subtitle">Answers with citations, sourced only from your PDFs</p>
+    </header>
+
+    <section class="card status">
+      <div class="status-line">
+        <span id="doc-count" class="badge">0 documents indexed</span>
+        <span id="qdrant-status" class="badge badge-muted">checking Qdrant…</span>
+      </div>
+      <div class="status-line small">
+        <span id="models-info" class="muted"></span>
+      </div>
+    </section>
+
+    <section class="card ingest">
+      <h2>Add documents</h2>
+      <div class="row">
+        <input type="file" id="pdf-input" accept=".pdf" multiple>
+        <button id="ingest-btn" class="btn">Upload &amp; Index</button>
+      </div>
+      <p id="ingest-msg" class="muted small"></p>
+    </section>
+
+    <section class="card ask">
+      <h2>Ask a question</h2>
+      <div class="row">
+        <input type="text" id="question-input" placeholder="e.g. What is the leave policy?"
+               autocomplete="off">
+        <button id="ask-btn" class="btn btn-primary">Ask</button>
+      </div>
+      <div id="loading" class="muted small hidden">Retrieving and generating answer…</div>
+    </section>
+
+    <section id="answer-panel" class="card answer hidden">
+      <div id="answer-text"></div>
+      <div id="sources"></div>
+    </section>
+
+    <footer class="muted small">
+      Retrieval-Augmented Generation · FastAPI + Qdrant + OpenRouter
+    </footer>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
