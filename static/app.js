@@ -133,10 +133,14 @@ async function ingestPdfs() {
   if (!files.length) return;
   const msg = $("ingest-msg");
   msg.hidden = false;
-  msg.textContent = `Indexing ${files.length} PDF(s)… this can take a minute per file.`;
+  msg.className = "ingest-msg notice";
+  msg.textContent =
+    files.length === 1
+      ? `Indexing ${files[0].name}… please wait before asking questions about it.`
+      : `Indexing ${files.length} PDFs… please wait before asking questions about them.`;
   let done = 0;
   for (const file of files) {
-    msg.textContent = `Indexing ${file.name} (${++done}/${files.length})…`;
+    msg.textContent = `Indexing ${file.name} (${++done}/${files.length})… please wait before asking questions about it.`;
     const form = new FormData();
     form.append("upload", file);
     try {
@@ -146,9 +150,17 @@ async function ingestPdfs() {
       msg.textContent += ` → FAILED: ${err.message}`;
     }
   }
-  msg.textContent += " Done.";
+  msg.className = "ingest-msg notice ok";
+  msg.textContent =
+    files.length === 1
+      ? "Done — new document indexed. Wait a moment before asking questions about it."
+      : `Done — ${files.length} documents indexed. Wait a moment before asking questions about them.`;
   input.value = "";
   refreshStatus();
+  setTimeout(() => {
+    msg.hidden = true;
+    msg.className = "ingest-msg";
+  }, 12000);
 }
 
 /* ------------------------------------------------------------------ */
