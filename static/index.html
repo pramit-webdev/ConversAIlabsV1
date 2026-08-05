@@ -7,44 +7,59 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo">▣</span>
-      <div>
-        <h1>PDF RAG Assistant</h1>
-        <span class="subtitle">Answers with citations, sourced only from your PDFs</span>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <span class="sidebar-title">Chats</span>
+        <button id="new-chat-sidebar-btn" class="btn btn-ghost btn-sm" title="New chat">＋</button>
       </div>
-    </div>
-    <div class="topbar-right">
-      <button id="new-chat-btn" class="btn btn-ghost" title="Start a new conversation">＋ New chat</button>
-      <span id="doc-count" class="badge">0 documents</span>
-      <span id="qdrant-status" class="badge badge-muted">checking…</span>
-      <label class="btn btn-ghost upload-btn" for="pdf-input">＋ Upload PDF</label>
-      <input type="file" id="pdf-input" accept=".pdf" multiple hidden>
-    </div>
-  </header>
+      <div id="thread-list" class="thread-list"></div>
+      <div class="sidebar-foot muted small">
+        PDF RAG Assistant · answers from your documents only
+      </div>
+    </aside>
 
-  <main class="chat" id="chat">
-    <div id="messages" class="messages"></div>
+    <div class="main-col">
+      <header class="topbar">
+        <button id="sidebar-toggle" class="btn btn-ghost btn-sm menu-btn" aria-label="Menu">☰</button>
+        <div class="brand">
+          <span class="logo">▣</span>
+          <div>
+            <h1>PDF RAG Assistant</h1>
+            <span class="subtitle">Answers with citations, sourced only from your PDFs</span>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <span id="doc-count" class="badge">0 documents</span>
+          <span id="qdrant-status" class="badge badge-muted">checking…</span>
+          <label class="btn btn-ghost upload-btn" for="pdf-input">＋ Upload PDF</label>
+          <input type="file" id="pdf-input" accept=".pdf" multiple hidden>
+        </div>
+      </header>
 
-    <div id="welcome" class="welcome">
-      <div class="welcome-icon">▣</div>
-      <h2>Ask anything about the documents</h2>
-      <p class="muted">Answers are generated only from the uploaded PDFs, with citations.</p>
-      <div class="welcome-suggestions" id="suggestions"></div>
+      <main class="chat" id="chat">
+        <div id="messages" class="messages"></div>
+
+        <div id="welcome" class="welcome">
+          <div class="welcome-icon">▣</div>
+          <h2>Ask anything about the documents</h2>
+          <p class="muted">Answers are generated only from the uploaded PDFs, with citations.</p>
+          <div class="welcome-suggestions" id="suggestions"></div>
+        </div>
+
+        <div id="ingest-msg" class="ingest-msg" hidden></div>
+      </main>
+
+      <footer class="composer-wrap">
+        <div class="composer">
+          <textarea id="question-input" rows="1"
+                    placeholder="Ask a question about the documents…"></textarea>
+          <button id="ask-btn" class="btn btn-primary send-btn" disabled aria-label="Send">➤</button>
+        </div>
+        <p class="composer-hint muted small">Enter to send · Shift+Enter for a new line · Sources: OpenRouter free models</p>
+      </footer>
     </div>
-
-    <div id="ingest-msg" class="ingest-msg" hidden></div>
-  </main>
-
-  <footer class="composer-wrap">
-    <div class="composer">
-      <textarea id="question-input" rows="1"
-                placeholder="Ask a question about the documents…"></textarea>
-      <button id="ask-btn" class="btn btn-primary send-btn" disabled aria-label="Send">➤</button>
-    </div>
-    <p class="composer-hint muted small">Enter to send · Shift+Enter for a new line · Sources: OpenRouter free models</p>
-  </footer>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

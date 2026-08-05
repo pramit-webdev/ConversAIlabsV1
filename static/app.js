@@ -1,10 +1,11 @@
-/* PDF RAG Assistant — chat-style frontend with streaming answers + session history. */
+/* PDF RAG Assistant — DeepSeek-style chat with sidebar threads + streaming. */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
 
 const REFUSAL_TEXT = "The information is not available in the provided documents.";
-const STORAGE_KEY = "pdfRagChatV1";
+const STORAGE_KEY = "pdfRagThreadsV1";
+const LEGACY_KEY = "pdfRagChatV1";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -30,34 +31,135 @@ function scrollToBottom(force = false) {
   if (force || nearBottom) scroller.scrollTop = scroller.scrollHeight;
 }
 
+function newThreadId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
 /* ------------------------------------------------------------------ */
-/* Session history (localStorage)                                      */
+/* Thread store (localStorage)                                         */
 /* ------------------------------------------------------------------ */
-function loadState() {
+function loadStore() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.threads)) return parsed;
+    }
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (legacy) {
+      const msgs = JSON.parse(legacy);
+      if (Array.isArray(msgs)) {
+        const t = { id: newThreadId(), title: "Imported chat", messages: msgs };
+        return { threads: [t], activeId: t.id };
+      }
+    }
   } catch {
-    return [];
+    /* fall through to fresh store */
   }
+  return { threads: [], activeId: null };
 }
 
-function saveState() {
+let store = loadStore();
+
+function saveStore() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(chatState));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
   } catch {
-    /* storage full / unavailable — chat still works, just not persisted */
+    /* storage unavailable — chat still works, just not persisted */
   }
 }
 
-let chatState = loadState();
+function activeThread() {
+  return store.threads.find((t) => t.id === store.activeId) || null;
+}
+
+function ensureActiveThread() {
+  if (activeThread()) return activeThread();
+  const t = { id: newThreadId(), title: "New chat", messages: [] };
+  store.threads.push(t);
+  store.activeId = t.id;
+  saveStore();
+  return t;
+}
+
+/* ------------------------------------------------------------------ */
+/* Sidebar                                                             */
+/* ------------------------------------------------------------------ */
+function renderSidebar() {
+  const list = $("thread-list");
+  list.innerHTML = "";
+  store.threads.forEach((t) => {
+    const item = document.createElement("div");
+    item.className = "thread-item" + (t.id === store.activeId ? " active" : "");
+
+    const label = document.createElement("span");
+    label.className = "thread-title";
+    label.textContent = t.title;
+    label.title = t.title;
+
+    const del = document.createElement("button");
+    del.className = "thread-del";
+    del.textContent = "×";
+    del.title = "Delete chat";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteThread(t.id);
+    });
+
+    item.appendChild(label);
+    item.appendChild(del);
+    item.addEventListener("click", () => openThread(t.id));
+    list.appendChild(item);
+  });
+}
+
+function openThread(id) {
+  if (!store.threads.find((t) => t.id === id)) return;
+  store.activeId = id;
+  saveStore();
+  renderSidebar();
+  renderThread(activeThread());
+}
+
+function newChat() {
+  const t = { id: newThreadId(), title: "New chat", messages: [] };
+  store.threads.push(t);
+  store.activeId = t.id;
+  saveStore();
+  renderSidebar();
+  renderThread(t);
+  $("question-input").value = "";
+  $("question-input").focus();
+  setBusy(false);
+}
+
+function deleteThread(id) {
+  store.threads = store.threads.filter((t) => t.id !== id);
+  if (store.activeId === id) {
+    store.activeId = store.threads.length ? store.threads[store.threads.length - 1].id : null;
+  }
+  saveStore();
+  renderSidebar();
+  const t = activeThread();
+  if (t) renderThread(t);
+  else newChat();
+  if (!store.threads.length) $("welcome").style.display = "";
+}
+
+/* ------------------------------------------------------------------ */
+/* Thread rendering                                                    */
+/* ------------------------------------------------------------------ */
 let msgSeq = 0;
 
-function renderState() {
-  if (!chatState.length) return;
+function renderThread(thread) {
+  $("messages").innerHTML = "";
+  msgSeq = 0;
+  if (!thread || !thread.messages.length) {
+    $("welcome").style.display = "";
+    return;
+  }
   $("welcome").style.display = "none";
-  for (const item of chatState) {
+  for (const item of thread.messages) {
     msgSeq += 1;
     if (item.role === "user") {
       const { body } = addMessage("user");
@@ -74,20 +176,6 @@ function renderState() {
     }
   }
   scrollToBottom(true);
-}
-
-function newChat() {
-  chatState = [];
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch {
-    /* ignore */
-  }
-  $("messages").innerHTML = "";
-  $("welcome").style.display = "";
-  $("question-input").value = "";
-  $("question-input").focus();
-  setBusy(false);
 }
 
 /* ------------------------------------------------------------------ */
@@ -233,11 +321,17 @@ async function askQuestion() {
   const question = input.value.trim();
   if (!question) return;
 
+  const thread = ensureActiveThread();
+
   input.value = "";
   autoGrow(input);
+  if (!thread.messages.length) {
+    thread.title = question.length > 48 ? question.slice(0, 48) + "…" : question;
+  }
   msgSeq += 1;
-  chatState.push({ role: "user", text: question });
-  saveState();
+  thread.messages.push({ role: "user", text: question });
+  saveStore();
+  renderSidebar();
   addUserMessage(question);
   $("welcome").style.display = "none";
   setBusy(true);
@@ -249,8 +343,8 @@ async function askQuestion() {
   let available = true;
 
   const finish = (text, isAvailable, srcs) => {
-    chatState.push({ role: "assistant", text, available: isAvailable, sources: srcs });
-    saveState();
+    thread.messages.push({ role: "assistant", text, available: isAvailable, sources: srcs });
+    saveStore();
   };
 
   try {
@@ -353,7 +447,7 @@ function setBusy(busy) {
 }
 
 $("ask-btn").addEventListener("click", askQuestion);
-$("new-chat-btn").addEventListener("click", newChat);
+$("new-chat-sidebar-btn").addEventListener("click", newChat);
 $("question-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -365,8 +459,13 @@ $("question-input").addEventListener("input", (e) => {
   setBusy(false);
 });
 $("pdf-input").addEventListener("change", ingestPdfs);
+$("sidebar-toggle").addEventListener("click", () => {
+  document.body.classList.toggle("sidebar-open");
+});
 
 renderSuggestions();
-renderState();
+renderSidebar();
+ensureActiveThread();
+renderThread(activeThread());
 refreshStatus();
 setBusy(false);
