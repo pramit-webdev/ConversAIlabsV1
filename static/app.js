@@ -165,13 +165,17 @@ function renderThread(thread) {
       const { body } = addMessage("user");
       body.textContent = item.text;
     } else if (item.role === "assistant") {
-      const { body } = addMessage("assistant");
+      const { content } = addMessage("assistant");
       if (item.available) {
-        linkCitations(body, item.text, msgSeq);
-        renderSources(body, item.sources || [], msgSeq);
+        const md = document.createElement("div");
+        md.className = "md";
+        md.innerHTML = mdToHtml(item.text, msgSeq);
+        content.appendChild(md);
+        renderSources(content, item.sources || [], msgSeq);
+        wireCopyButtons(md);
       } else {
-        body.classList.add("refusal");
-        body.textContent = REFUSAL_TEXT;
+        content.classList.add("refusal");
+        content.textContent = REFUSAL_TEXT;
       }
     }
   }
@@ -197,7 +201,7 @@ function renderSuggestions() {
     b.textContent = q;
     b.addEventListener("click", () => {
       $("question-input").value = q;
-      $("question-input").focus();
+      askQuestion();
     });
     wrap.appendChild(b);
   });
@@ -206,24 +210,35 @@ function renderSuggestions() {
 function addMessage(role) {
   const msg = document.createElement("div");
   msg.className = `msg msg-${role}`;
-  const body = document.createElement("div");
-  body.className = "bubble";
-  msg.appendChild(body);
+  const content = document.createElement("div");
+  content.className = "content";
+  msg.appendChild(content);
+  if (role === "assistant") {
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.textContent = "▣";
+    msg.appendChild(avatar);
+  }
   $("messages").appendChild(msg);
-  return { msg, body };
+  return { msg, content };
 }
 
 function addUserMessage(text) {
-  const { body } = addMessage("user");
-  body.textContent = text;
+  const { content } = addMessage("user");
+  content.textContent = text;
   scrollToBottom(true);
 }
 
 function addTyping() {
-  const { body } = addMessage("assistant");
-  body.classList.add("typing");
-  body.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-  return body;
+  const { content } = addMessage("assistant");
+  const bubble = document.createElement("div");
+  bubble.className = "typing";
+  bubble.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+  const textEl = document.createElement("div");
+  textEl.className = "stream-text";
+  bubble.appendChild(textEl);
+  content.appendChild(bubble);
+  return { bubble, textEl, content };
 }
 
 function renderSources(body, sources, msgId) {
@@ -249,16 +264,128 @@ function renderSources(body, sources, msgId) {
   body.appendChild(wrap);
 }
 
-function linkCitations(body, text, msgId) {
-  body.innerHTML = escapeHtml(text).replace(
-    /[\[【](\d+)[\]】]/g,
-    (match, n) => {
-      const el = document.getElementById(`src-${msgId}-${n}`);
-      return el
-        ? `<a class="cite" href="#src-${msgId}-${n}" title="Source ${n}">[${n}]</a>`
-        : match;
+function inlineMd(text, msgId) {
+  let s = text;
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  s = s.replace(/[\[【](\d+)[\]】]/g, (match, n) => {
+    const el = document.getElementById(`src-${msgId}-${n}`);
+    return el ? `<a class="cite" href="#src-${msgId}-${n}" title="Source ${n}">[${n}]</a>` : match;
+  });
+  return s;
+}
+
+function tableMd(rows) {
+  const cells = (row) => row.split("|").slice(1, -1).map((c) => c.trim());
+  let t = "<table><thead><tr>" + cells(rows[0]).map((h) => `<th>${inlineMd(h)}</th>`).join("") + "</tr></thead><tbody>";
+  for (const row of rows.slice(2)) {
+    t += "<tr>" + cells(row).map((c) => `<td>${inlineMd(c)}</td>`).join("") + "</tr>";
+  }
+  return t + "</tbody></table>";
+}
+
+function mdToHtml(src, msgId) {
+  const blocks = [];
+  let html = escapeHtml(String(src || ""));
+  html = html.replace(/```([\w-]*)\n?([\s\S]*?)```/g, (m, lang, body) => {
+    blocks.push({ lang, body });
+    return `\u0000CODE${blocks.length - 1}\u0000`;
+  });
+  const lines = html.split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\|/.test(line) && /^\|[\s:\-|]+\|?$/.test(lines[i + 1] || "")) {
+      const rows = [];
+      while (i < lines.length && /^\|/.test(lines[i]) && lines[i].trim() !== "") rows.push(lines[i++]);
+      out.push(tableMd(rows));
+      continue;
     }
-  );
+    const heading = line.match(/^(#{1,6})\s+(.*)$/);
+    if (heading) {
+      const lvl = Math.min(heading[1].length, 4);
+      out.push(`<h${lvl}>${inlineMd(heading[2], msgId)}</h${lvl}>`);
+      i++;
+      continue;
+    }
+    if (/^\s*(---+|\*\*\*+|___+)\s*$/.test(line)) {
+      out.push("<hr>");
+      i++;
+      continue;
+    }
+    if (/^\s*[-*+]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line)) {
+      const ordered = /^\s*\d+[.)]\s+/.test(line);
+      const items = [];
+      while (i < lines.length && (/^\s*[-*+]\s+/.test(lines[i]) || /^\s*\d+[.)]\s+/.test(lines[i]))) {
+        items.push(`<li>${inlineMd(lines[i].replace(/^\s*[-*+]\s+/, "").replace(/^\s*\d+[.)]\s+/, ""), msgId)}</li>`);
+        i++;
+      }
+      out.push(ordered ? `<ol>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`);
+      continue;
+    }
+    if (/^&gt;/.test(line)) {
+      const q = [];
+      while (i < lines.length && /^&gt;/.test(lines[i])) q.push(lines[i++].replace(/^&gt;\s?/, ""));
+      out.push(`<blockquote>${inlineMd(q.join(" "), msgId)}</blockquote>`);
+      continue;
+    }
+    if (line.indexOf("\u0000CODE") !== -1) {
+      out.push(line);
+      i++;
+      continue;
+    }
+    if (line.trim() === "") {
+      i++;
+      continue;
+    }
+    const para = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      lines[i].indexOf("\u0000CODE") === -1 &&
+      !/^&gt;/.test(lines[i]) &&
+      !/^\s*[-*+]\s+/.test(lines[i]) &&
+      !/^\s*\d+[.)]\s+/.test(lines[i]) &&
+      !/^\|/.test(lines[i]) &&
+      !/^(#{1,6})\s/.test(lines[i]) &&
+      !/^\s*(---+|\*\*\*+|___+)\s*$/.test(lines[i])
+    ) {
+      para.push(lines[i++]);
+    }
+    out.push(`<p>${inlineMd(para.join("\n"), msgId)}</p>`);
+  }
+  html = out.join("\n");
+  return html.replace(/\u0000CODE(\d+)\u0000/g, (m, n) => {
+    const b = blocks[+n];
+    return `<pre><code class="lang-${b.lang || "plain"}">${b.body}</code></pre>`;
+  });
+}
+
+function wireCopyButtons(root) {
+  root.querySelectorAll("pre").forEach((pre) => {
+    if (pre.querySelector(".copy-btn")) return;
+    const btn = document.createElement("button");
+    btn.className = "copy-btn";
+    btn.textContent = "Copy";
+    btn.addEventListener("click", async () => {
+      const code = pre.querySelector("code");
+      try {
+        await navigator.clipboard.writeText(code.innerText);
+        btn.textContent = "Copied";
+        btn.classList.add("copied");
+        setTimeout(() => {
+          btn.textContent = "Copy";
+          btn.classList.remove("copied");
+        }, 1500);
+      } catch {
+        btn.textContent = "Copy";
+      }
+    });
+    pre.appendChild(btn);
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -338,10 +465,7 @@ async function askQuestion() {
   $("welcome").style.display = "none";
   setBusy(true);
 
-  const typing = addTyping();
-  const textEl = document.createElement("div");
-  textEl.className = "stream-text";
-  typing.appendChild(textEl);
+  const { bubble, textEl, content } = addTyping();
   let answerText = "";
   let pending = "";
   let rafId = null;
@@ -359,9 +483,9 @@ async function askQuestion() {
     pending = "";
     if (!started) {
       started = true;
-      typing.classList.remove("typing");
+      bubble.classList.remove("typing");
     }
-    textEl.textContent = answerText;
+    textEl.innerHTML = mdToHtml(answerText, msgSeq);
     scrollToBottom();
   };
 
@@ -410,10 +534,10 @@ async function askQuestion() {
           if (available && !started) textEl.textContent = "Generating answer…";
         } else if (event.type === "sources") {
           sources = event.sources || [];
-          renderSources(typing, sources, msgSeq);
+          renderSources(content, sources, msgSeq);
         } else if (event.type === "error") {
-          typing.classList.remove("typing");
-          typing.innerHTML = `<span class="error">Error: ${escapeHtml(event.message)}</span>`;
+          bubble.classList.remove("typing");
+          bubble.innerHTML = `<span class="error">Error: ${escapeHtml(event.message)}</span>`;
           done = true;
         } else if (event.type === "done") {
           done = true;
@@ -422,8 +546,8 @@ async function askQuestion() {
     }
   } catch (err) {
     if (!done) {
-      typing.classList.remove("typing");
-      typing.innerHTML = `<span class="error">Error: ${escapeHtml(err.message)}</span>`;
+      bubble.classList.remove("typing");
+      bubble.innerHTML = `<span class="error">Error: ${escapeHtml(err.message)}</span>`;
       done = true;
     }
   }
@@ -433,26 +557,29 @@ async function askQuestion() {
 
   if (done && answerText) {
     const isRefusal = answerText.toLowerCase().includes("not available in the provided documents");
-    typing.classList.remove("typing");
+    bubble.classList.remove("typing");
     if (isRefusal) {
       available = false;
       sources = [];
-      typing.classList.add("refusal");
-      typing.textContent = REFUSAL_TEXT;
+      content.classList.add("refusal");
+      content.textContent = REFUSAL_TEXT;
       finish(REFUSAL_TEXT, false, []);
     } else if (available) {
-      textEl.textContent = "";
-      linkCitations(textEl, answerText, msgSeq);
-      renderSources(typing, sources, msgSeq);
+      const md = document.createElement("div");
+      md.className = "md";
+      md.innerHTML = mdToHtml(answerText, msgSeq);
+      content.replaceChildren(md);
+      renderSources(content, sources, msgSeq);
+      wireCopyButtons(md);
       finish(answerText, true, sources);
     } else {
-      typing.classList.add("refusal");
-      typing.textContent = REFUSAL_TEXT;
+      content.classList.add("refusal");
+      content.textContent = REFUSAL_TEXT;
       finish(REFUSAL_TEXT, false, []);
     }
   } else if (done && !answerText) {
-    typing.classList.add("refusal");
-    typing.textContent = REFUSAL_TEXT;
+    content.classList.add("refusal");
+    content.textContent = REFUSAL_TEXT;
     finish(REFUSAL_TEXT, false, []);
   }
 
@@ -487,6 +614,9 @@ $("question-input").addEventListener("input", (e) => {
 $("pdf-input").addEventListener("change", ingestPdfs);
 $("sidebar-toggle").addEventListener("click", () => {
   document.body.classList.toggle("sidebar-open");
+});
+$("sidebar-toggle-side").addEventListener("click", () => {
+  document.body.classList.remove("sidebar-open");
 });
 
 renderSuggestions();
