@@ -228,6 +228,8 @@ function addTyping() {
 
 function renderSources(body, sources, msgId) {
   if (!sources.length) return;
+  const old = body.querySelector(".sources");
+  if (old) old.remove();
   const wrap = document.createElement("div");
   wrap.className = "sources";
   wrap.innerHTML = `<div class="sources-title">SOURCES</div>`;
@@ -337,10 +339,31 @@ async function askQuestion() {
   setBusy(true);
 
   const typing = addTyping();
+  const textEl = document.createElement("div");
+  textEl.className = "stream-text";
+  typing.appendChild(textEl);
   let answerText = "";
+  let pending = "";
+  let rafId = null;
+  let started = false;
   let sources = [];
   let done = false;
   let available = true;
+
+  textEl.textContent = "Searching the documents…";
+
+  const flush = () => {
+    rafId = null;
+    if (!pending) return;
+    answerText += pending;
+    pending = "";
+    if (!started) {
+      started = true;
+      typing.classList.remove("typing");
+    }
+    textEl.textContent = answerText;
+    scrollToBottom();
+  };
 
   const finish = (text, isAvailable, srcs) => {
     thread.messages.push({ role: "assistant", text, available: isAvailable, sources: srcs });
@@ -380,14 +403,14 @@ async function askQuestion() {
           continue;
         }
         if (event.type === "token") {
-          answerText += event.text;
-          typing.classList.remove("typing");
-          typing.textContent = answerText;
-          scrollToBottom();
+          pending += event.text;
+          if (!rafId) rafId = requestAnimationFrame(flush);
         } else if (event.type === "available") {
           available = event.available;
+          if (available && !started) textEl.textContent = "Generating answer…";
         } else if (event.type === "sources") {
           sources = event.sources || [];
+          renderSources(typing, sources, msgSeq);
         } else if (event.type === "error") {
           typing.classList.remove("typing");
           typing.innerHTML = `<span class="error">Error: ${escapeHtml(event.message)}</span>`;
@@ -405,6 +428,9 @@ async function askQuestion() {
     }
   }
 
+  if (rafId) cancelAnimationFrame(rafId);
+  flush();
+
   if (done && answerText) {
     const isRefusal = answerText.toLowerCase().includes("not available in the provided documents");
     typing.classList.remove("typing");
@@ -415,8 +441,8 @@ async function askQuestion() {
       typing.textContent = REFUSAL_TEXT;
       finish(REFUSAL_TEXT, false, []);
     } else if (available) {
-      typing.textContent = "";
-      linkCitations(typing, answerText, msgSeq);
+      textEl.textContent = "";
+      linkCitations(textEl, answerText, msgSeq);
       renderSources(typing, sources, msgSeq);
       finish(answerText, true, sources);
     } else {

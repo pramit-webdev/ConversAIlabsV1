@@ -88,12 +88,15 @@ def answer_question(question: str, top_k: int | None = None) -> RAGAnswer:
 
 def answer_question_stream(question: str) -> Iterator[tuple[str, object]]:
     """Streaming pipeline. Yields (kind, payload) tuples:
-    ("token", str) for answer text, then ("sources", list[Hit]) once
-    the LLM finishes, then ("done", None).
+    ("available", bool) and ("sources", list[Hit]) immediately after
+    retrieval so the UI can show evidence while the LLM generates,
+    then ("token", str) for answer text, then a final
+    ("sources", list[Hit]) filtered to cited hits once the LLM
+    finishes, then ("done", None).
 
     On a gated/unavailable question, yields a single token with the refusal
-    message, then ("sources", []) and ("done", None). Raises
-    VectorStoreError/OpenRouterError on hard failure.
+    message, then ("available", False), ("sources", []) and ("done", None).
+    Raises VectorStoreError/OpenRouterError on hard failure.
     """
     store = VectorStore()
 
@@ -109,6 +112,8 @@ def answer_question_stream(question: str) -> Iterator[tuple[str, object]]:
             return
 
         context = _build_context(hits)
+        yield ("available", True)
+        yield ("sources", hits)
         tokens: list[str] = []
         stream = llm.chat_stream(system=SYSTEM_PROMPT, user=f"Question: {question}\n\nSources:\n{context}")
         try:
@@ -121,10 +126,8 @@ def answer_question_stream(question: str) -> Iterator[tuple[str, object]]:
         answer = "".join(tokens).strip()
         if not answer:
             answer = NOT_FOUND_ANSWER
-        available = "not available in the provided documents" not in answer.lower()
-        yield ("available", available)
-        if available:
-            yield ("sources", _cited_sources(answer, hits))
-        else:
+        if "not available in the provided documents" in answer.lower():
             yield ("sources", [])
+        else:
+            yield ("sources", _cited_sources(answer, hits))
         yield ("done", None)
