@@ -251,6 +251,7 @@ function renderSources(body, sources, msgId) {
   sources.forEach((s, i) => {
     const card = document.createElement("div");
     card.className = "source";
+    card.dataset.idx = String(s.idx || i + 1);
     card.id = `src-${msgId}-${i + 1}`;
     card.innerHTML = `
       <div class="source-head">
@@ -568,9 +569,18 @@ async function askQuestion() {
       const md = document.createElement("div");
       md.className = "md";
       md.innerHTML = mdToHtml(answerText, msgSeq);
-      content.replaceChildren(md);
-      renderSources(content, sources, msgSeq);
+      bubble.remove();
+      content.insertBefore(md, content.querySelector(".sources") || null);
       wireCopyButtons(md);
+      const citedIdx = new Set((sources || []).map((s) => s.idx));
+      if (citedIdx.size) {
+        content.querySelectorAll(".source").forEach((card) => {
+          if (!citedIdx.has(Number(card.dataset.idx))) {
+            card.classList.add("removing");
+            setTimeout(() => card.remove(), 320);
+          }
+        });
+      }
       finish(answerText, true, sources);
     } else {
       content.classList.add("refusal");

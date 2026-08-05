@@ -367,8 +367,9 @@ body {
   margin-bottom: 8px;
   background: #fafafa;
   scroll-margin-top: 80px;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color 0.15s, background 0.15s, opacity 0.3s ease, transform 0.3s ease;
 }
+.source.removing { opacity: 0; transform: translateX(-6px); }
 .source:hover { border-color: #c9c9c9; background: #fff; }
 .source-head {
   display: flex;

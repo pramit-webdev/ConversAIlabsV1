@@ -81,8 +81,8 @@ def ask(body: AskRequest) -> dict:
         "answer": result.answer,
         "available": result.available,
         "sources": [
-            {"document": h.document, "page": h.page, "text": h.text, "score": round(h.score, 4)}
-            for h in result.sources
+            {"idx": i, "document": h.document, "page": h.page, "text": h.text, "score": round(h.score, 4)}
+            for i, h in enumerate(result.sources, start=1)
         ],
     }
 
@@ -109,9 +109,9 @@ def ask_stream(body: AskRequest) -> StreamingResponse:
                     yield _sse({
                         "type": "sources",
                         "sources": [
-                            {"document": h.document, "page": h.page, "text": h.text,
+                            {"idx": i, "document": h.document, "page": h.page, "text": h.text,
                              "score": round(h.score, 4)}
-                            for h in payload
+                            for i, h in enumerate(payload, start=1)
                         ],
                     })
                 elif kind == "done":
