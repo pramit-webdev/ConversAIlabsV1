@@ -13,7 +13,7 @@ import httpx
 
 from .config import settings
 
-TIMEOUT = 60.0
+TIMEOUT = 120.0
 FREE_MODEL_NOT_FOUND_STATUSES = {400, 404, 402, 429, 502}
 
 
