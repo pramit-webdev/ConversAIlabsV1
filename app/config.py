@@ -20,9 +20,15 @@ def _csv(value: str | None) -> list[str]:
 class Settings:
     def __init__(self) -> None:
         # LLM generation (NVIDIA free chat by default; OPENROUTER_* vars switch to OpenRouter)
-        self.llm_base_url: str = os.getenv("LLM_BASE_URL", "https://integrate.api.nvidia.com/v1")
-        self.llm_api_key: str = os.getenv("LLM_API_KEY", "") or os.getenv("OPENROUTER_API_KEY", "")
-        self.llm_model: str = os.getenv("LLM_MODEL", "meta/llama-3.3-70b-instruct")
+        self.llm_base_url: str = os.getenv("LLM_BASE_URL", "").strip() or "https://integrate.api.nvidia.com/v1"
+        llm_api_key = os.getenv("LLM_API_KEY", "").strip()
+        if not llm_api_key:
+            # NVIDIA endpoints reuse the embedding key; otherwise use the OpenRouter key
+            if "nvidia.com" in self.llm_base_url:
+                llm_api_key = os.getenv("EMBEDDING_API_KEY", "").strip()
+            llm_api_key = llm_api_key or os.getenv("OPENROUTER_API_KEY", "").strip()
+        self.llm_api_key: str = llm_api_key
+        self.llm_model: str = os.getenv("LLM_MODEL", "").strip() or "minimaxai/minimax-m3"
         self.llm_fallback_models: list[str] = _csv(os.getenv("LLM_FALLBACK_MODELS", ""))
         # Cross-provider fallback (e.g. NVIDIA free chat) used when every
         # configured model is unavailable; reuses the embedding API key unless
@@ -31,7 +37,7 @@ class Settings:
             "LLM_FALLBACK_BASE_URL", "https://integrate.api.nvidia.com/v1"
         )
         self.llm_fallback_api_key: str = os.getenv("LLM_FALLBACK_API_KEY", "")
-        self.llm_fallback_model: str = os.getenv("LLM_FALLBACK_MODEL", "meta/llama-3.3-70b-instruct")
+        self.llm_fallback_model: str = os.getenv("LLM_FALLBACK_MODEL", "").strip() or "meta/llama-3.1-8b-instruct"
 
         # Embeddings (provider-agnostic: nvidia | openrouter | groq)
         provider = os.getenv("EMBEDDING_PROVIDER", "nvidia").strip().lower()
