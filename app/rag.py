@@ -61,7 +61,7 @@ def answer_question(question: str, top_k: int | None = None) -> RAGAnswer:
 
         # 3. Gate: nothing relevant retrieved -> do not answer
         if not hits or hits[0].score < settings.retrieval_score_threshold:
-            return RAGAnswer(answer=NOT_FOUND_ANSWER, available=False, sources=hits)
+            return RAGAnswer(answer=NOT_FOUND_ANSWER, available=False)
 
         # 4. Generate with grounded context
         context = _build_context(hits)
