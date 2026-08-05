@@ -1,9 +1,10 @@
-/* PDF RAG Assistant — chat-style frontend with streaming answers. */
+/* PDF RAG Assistant — chat-style frontend with streaming answers + session history. */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
 
 const REFUSAL_TEXT = "The information is not available in the provided documents.";
+const STORAGE_KEY = "pdfRagChatV1";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -27,6 +28,66 @@ function scrollToBottom(force = false) {
   const nearBottom =
     scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160;
   if (force || nearBottom) scroller.scrollTop = scroller.scrollHeight;
+}
+
+/* ------------------------------------------------------------------ */
+/* Session history (localStorage)                                      */
+/* ------------------------------------------------------------------ */
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(chatState));
+  } catch {
+    /* storage full / unavailable — chat still works, just not persisted */
+  }
+}
+
+let chatState = loadState();
+let msgSeq = 0;
+
+function renderState() {
+  if (!chatState.length) return;
+  $("welcome").style.display = "none";
+  for (const item of chatState) {
+    msgSeq += 1;
+    if (item.role === "user") {
+      const { body } = addMessage("user");
+      body.textContent = item.text;
+    } else if (item.role === "assistant") {
+      const { body } = addMessage("assistant");
+      if (item.available) {
+        linkCitations(body, item.text, msgSeq);
+        renderSources(body, item.sources || [], msgSeq);
+      } else {
+        body.classList.add("refusal");
+        body.textContent = REFUSAL_TEXT;
+      }
+    }
+  }
+  scrollToBottom(true);
+}
+
+function newChat() {
+  chatState = [];
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+  $("messages").innerHTML = "";
+  $("welcome").style.display = "";
+  $("question-input").value = "";
+  $("question-input").focus();
+  setBusy(false);
 }
 
 /* ------------------------------------------------------------------ */
@@ -77,7 +138,7 @@ function addTyping() {
   return body;
 }
 
-function renderSources(body, sources) {
+function renderSources(body, sources, msgId) {
   if (!sources.length) return;
   const wrap = document.createElement("div");
   wrap.className = "sources";
@@ -85,7 +146,7 @@ function renderSources(body, sources) {
   sources.forEach((s, i) => {
     const card = document.createElement("div");
     card.className = "source";
-    card.id = `src-${i + 1}`;
+    card.id = `src-${msgId}-${i + 1}`;
     card.innerHTML = `
       <div class="source-head">
         <span class="source-num">${i + 1}</span>
@@ -98,13 +159,13 @@ function renderSources(body, sources) {
   body.appendChild(wrap);
 }
 
-function linkCitations(body, text) {
+function linkCitations(body, text, msgId) {
   body.innerHTML = escapeHtml(text).replace(
     /[\[【](\d+)[\]】]/g,
     (match, n) => {
-      const el = document.getElementById(`src-${n}`);
+      const el = document.getElementById(`src-${msgId}-${n}`);
       return el
-        ? `<a class="cite" href="#src-${n}" title="Source ${n}">[${n}]</a>`
+        ? `<a class="cite" href="#src-${msgId}-${n}" title="Source ${n}">[${n}]</a>`
         : match;
     }
   );
@@ -174,6 +235,9 @@ async function askQuestion() {
 
   input.value = "";
   autoGrow(input);
+  msgSeq += 1;
+  chatState.push({ role: "user", text: question });
+  saveState();
   addUserMessage(question);
   $("welcome").style.display = "none";
   setBusy(true);
@@ -184,10 +248,9 @@ async function askQuestion() {
   let done = false;
   let available = true;
 
-  const setError = (msg) => {
-    typing.classList.remove("typing");
-    typing.innerHTML = `<span class="error">Error: ${escapeHtml(msg)}</span>`;
-    done = true;
+  const finish = (text, isAvailable, srcs) => {
+    chatState.push({ role: "assistant", text, available: isAvailable, sources: srcs });
+    saveState();
   };
 
   try {
@@ -232,34 +295,45 @@ async function askQuestion() {
         } else if (event.type === "sources") {
           sources = event.sources || [];
         } else if (event.type === "error") {
-          setError(event.message);
+          typing.classList.remove("typing");
+          typing.innerHTML = `<span class="error">Error: ${escapeHtml(event.message)}</span>`;
+          done = true;
         } else if (event.type === "done") {
           done = true;
         }
       }
     }
   } catch (err) {
-    if (!done) setError(err.message);
+    if (!done) {
+      typing.classList.remove("typing");
+      typing.innerHTML = `<span class="error">Error: ${escapeHtml(err.message)}</span>`;
+      done = true;
+    }
   }
 
-  if (done && !answerText) {
-    typing.textContent = REFUSAL_TEXT;
-    typing.classList.add("refusal");
-  } else if (answerText) {
-    if (answerText.toLowerCase().includes("not available in the provided documents")) {
-      available = false;
-    }
+  if (done && answerText) {
+    const isRefusal = answerText.toLowerCase().includes("not available in the provided documents");
     typing.classList.remove("typing");
-    if (available) {
+    if (isRefusal) {
+      available = false;
+      sources = [];
+      typing.classList.add("refusal");
+      typing.textContent = REFUSAL_TEXT;
+      finish(REFUSAL_TEXT, false, []);
+    } else if (available) {
       typing.textContent = "";
-      linkCitations(typing, answerText);
-      renderSources(typing, sources);
+      linkCitations(typing, answerText, msgSeq);
+      renderSources(typing, sources, msgSeq);
+      finish(answerText, true, sources);
     } else {
       typing.classList.add("refusal");
       typing.textContent = REFUSAL_TEXT;
+      finish(REFUSAL_TEXT, false, []);
     }
-  } else {
-    typing.innerHTML = `<span class="error">No answer received.</span>`;
+  } else if (done && !answerText) {
+    typing.classList.add("refusal");
+    typing.textContent = REFUSAL_TEXT;
+    finish(REFUSAL_TEXT, false, []);
   }
 
   scrollToBottom(true);
@@ -279,6 +353,7 @@ function setBusy(busy) {
 }
 
 $("ask-btn").addEventListener("click", askQuestion);
+$("new-chat-btn").addEventListener("click", newChat);
 $("question-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -292,5 +367,6 @@ $("question-input").addEventListener("input", (e) => {
 $("pdf-input").addEventListener("change", ingestPdfs);
 
 renderSuggestions();
+renderState();
 refreshStatus();
 setBusy(false);
