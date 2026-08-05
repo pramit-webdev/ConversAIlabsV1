@@ -5,7 +5,9 @@ client class with per-provider configuration covers everything.
 """
 from __future__ import annotations
 
+import json
 import time
+from typing import Iterator
 
 import httpx
 
@@ -131,6 +133,25 @@ class ApiClient:
                 print(f"[llm] model {model!r} unavailable ({exc.status}), trying next")
         raise OpenRouterError(f"All configured models failed: {last_error}")
 
+    def chat_stream(self, system: str, user: str, *, max_tokens: int = 1024) -> "OpenAIStream":
+        """Streaming completion. Falls back across configured models until the
+        first token arrives; a mid-stream failure is raised to the caller."""
+        models = [settings.llm_model, *settings.llm_fallback_models]
+        last_error: OpenRouterError | None = None
+        for model in models:
+            stream = OpenAIStream(self._client, model, system, user, max_tokens=max_tokens)
+            try:
+                # Fail fast on non-2xx before yielding anything so fallbacks work
+                stream.open()
+            except OpenRouterError as exc:
+                last_error = exc
+                if exc.status not in FREE_MODEL_NOT_FOUND_STATUSES:
+                    raise
+                print(f"[llm] model {model!r} unavailable ({exc.status}), trying next")
+                continue
+            return stream
+        raise OpenRouterError(f"All configured models failed: {last_error}")
+
     # ------------------------------------------------------------------ #
     # Internal
     # ------------------------------------------------------------------ #
@@ -142,6 +163,94 @@ class ApiClient:
                 status=response.status_code,
             )
         return response.json()
+
+
+class OpenAIStream:
+    """Incremental SSE parser for OpenAI-compatible streaming completions.
+
+    Call :meth:`open` to send the request (raising OpenRouterError on non-2xx),
+    then iterate over the object to receive content tokens as strings.
+    """
+
+    def __init__(
+        self,
+        client: httpx.Client,
+        model: str,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int,
+    ) -> None:
+        self._client = client
+        self._cm: httpx._types.ContextManager | None = None
+        self._response: httpx.Response | None = None
+        self._lines: "Iterator[str]" | None = None
+        self._model = model
+        self._body = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": 0.2,
+            "stream": True,
+        }
+
+    def open(self) -> None:
+        cm = self._client.stream(
+            "POST",
+            "/chat/completions",
+            json=self._body,
+            timeout=httpx.Timeout(30, read=180),
+        )
+        response = cm.__enter__()
+        self._cm = cm
+        self._response = response
+        if response.status_code >= 400:
+            detail = response.read().decode(errors="replace")[:500]
+            self.close()
+            raise OpenRouterError(
+                f"API /chat/completions failed ({response.status_code}): {detail}",
+                status=response.status_code,
+            )
+        self._lines = response.iter_lines()
+
+    def __iter__(self) -> "OpenAIStream":
+        return self
+
+    def __next__(self) -> str:
+        """Yield the next content token; raise StopIteration when done."""
+        if self._lines is None:
+            raise StopIteration
+        for line in self._lines:
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                self.close()
+                raise StopIteration
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            delta = (choices[0].get("delta") or {}).get("content")
+            if delta:
+                return delta
+        # stream ended without [DONE]
+        self.close()
+        raise StopIteration
+
+    def close(self) -> None:
+        cm, self._cm = self._cm, None
+        if cm is not None:
+            try:
+                cm.__exit__(None, None, None)
+            finally:
+                self._response = None
 
 
 def build_embedder() -> ApiClient:

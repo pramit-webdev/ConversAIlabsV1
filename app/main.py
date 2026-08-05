@@ -1,17 +1,18 @@
 """FastAPI application: RAG API + static frontend."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import ingest as ingest_service
 from .config import settings
 from .openrouter import OpenRouterError
-from .rag import answer_question
+from .rag import answer_question, answer_question_stream
 from .vector_store import VectorStore, VectorStoreError
 
 app = FastAPI(title="PDF RAG Assistant", version="1.0.0")
@@ -84,6 +85,43 @@ def ask(body: AskRequest) -> dict:
             for h in result.sources
         ],
     }
+
+
+def _sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+@app.post("/api/ask/stream")
+def ask_stream(body: AskRequest) -> StreamingResponse:
+    """Server-sent events: {type: token, text} ... {type: sources, sources: [...]} {type: done}"""
+    question = body.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    def events():
+        try:
+            for kind, payload in answer_question_stream(question):
+                if kind == "token":
+                    yield _sse({"type": "token", "text": payload})
+                elif kind == "available":
+                    yield _sse({"type": "available", "available": bool(payload)})
+                elif kind == "sources":
+                    yield _sse({
+                        "type": "sources",
+                        "sources": [
+                            {"document": h.document, "page": h.page, "text": h.text,
+                             "score": round(h.score, 4)}
+                            for h in payload
+                        ],
+                    })
+                elif kind == "done":
+                    yield _sse({"type": "done"})
+        except (OpenRouterError, VectorStoreError) as exc:
+            yield _sse({"type": "error", "message": str(exc)})
+        except Exception as exc:  # keep the stream alive instead of a half-open connection
+            yield _sse({"type": "error", "message": f"Unexpected error: {exc}"})
+
+    return StreamingResponse(events(), media_type="text/event-stream")
 
 
 @app.get("/api/openrouter/models")

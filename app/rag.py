@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Iterator
 
 from .config import settings
 from .openrouter import OpenRouterError, build_embedder, build_llm
@@ -47,6 +48,14 @@ def _parse_cited_markers(answer: str, num_sources: int) -> list[int]:
     return sorted(markers)
 
 
+def _cited_sources(answer: str, hits: list[Hit]) -> list[Hit]:
+    """Return the hits the model actually cited; fall back to top-1."""
+    cited = _parse_cited_markers(answer, len(hits))
+    if cited:
+        return [hits[i - 1] for i in cited]
+    return hits[:1]
+
+
 def answer_question(question: str, top_k: int | None = None) -> RAGAnswer:
     """Full pipeline. Raises VectorStoreError/OpenRouterError on failure."""
     top_k = top_k or settings.retrieval_top_k
@@ -74,9 +83,48 @@ def answer_question(question: str, top_k: int | None = None) -> RAGAnswer:
         if answer == NOT_FOUND_ANSWER or "not available in the provided documents" in answer.lower():
             return RAGAnswer(answer=NOT_FOUND_ANSWER, available=False, sources=[])
 
-        cited = _parse_cited_markers(answer, len(hits))
-        if cited:
-            sources = [hits[i - 1] for i in cited]
+        return RAGAnswer(answer=answer, available=True, sources=_cited_sources(answer, hits))
+
+
+def answer_question_stream(question: str) -> Iterator[tuple[str, object]]:
+    """Streaming pipeline. Yields (kind, payload) tuples:
+    ("token", str) for answer text, then ("sources", list[Hit]) once
+    the LLM finishes, then ("done", None).
+
+    On a gated/unavailable question, yields a single token with the refusal
+    message, then ("sources", []) and ("done", None). Raises
+    VectorStoreError/OpenRouterError on hard failure.
+    """
+    store = VectorStore()
+
+    with build_embedder() as embedder, build_llm() as llm:
+        query_vector = embedder.embed([question], input_type="query")[0]
+        hits = store.search(query_vector, limit=settings.retrieval_top_k)
+
+        if not hits or hits[0].score < settings.retrieval_score_threshold:
+            yield ("token", NOT_FOUND_ANSWER)
+            yield ("available", False)
+            yield ("sources", [])
+            yield ("done", None)
+            return
+
+        context = _build_context(hits)
+        tokens: list[str] = []
+        stream = llm.chat_stream(system=SYSTEM_PROMPT, user=f"Question: {question}\n\nSources:\n{context}")
+        try:
+            for token in stream:
+                tokens.append(token)
+                yield ("token", token)
+        finally:
+            stream.close()
+
+        answer = "".join(tokens).strip()
+        if not answer:
+            answer = NOT_FOUND_ANSWER
+        available = "not available in the provided documents" not in answer.lower()
+        yield ("available", available)
+        if available:
+            yield ("sources", _cited_sources(answer, hits))
         else:
-            sources = hits[:1]  # model omitted markers; attribute to strongest source
-        return RAGAnswer(answer=answer, available=True, sources=sources)
+            yield ("sources", [])
+        yield ("done", None)
