@@ -128,10 +128,10 @@ class ApiClient:
                 raise OpenRouterError(f"Model {model!r} returned an empty response", status=502)
             except OpenRouterError as exc:
                 last_error = exc
-                if exc.status not in FREE_MODEL_NOT_FOUND_STATUSES:
+                if exc.status is not None and exc.status not in FREE_MODEL_NOT_FOUND_STATUSES:
                     raise
                 print(f"[llm] model {model!r} unavailable ({exc.status}), trying next")
-        raise OpenRouterError(f"All configured models failed: {last_error}")
+        return _chat_with_nvidia_fallback(system, user, max_tokens=max_tokens, last_error=last_error)
 
     def chat_stream(self, system: str, user: str, *, max_tokens: int = 1024) -> "OpenAIStream":
         """Streaming completion. Falls back across configured models until the
@@ -145,18 +145,21 @@ class ApiClient:
                 stream.open()
             except OpenRouterError as exc:
                 last_error = exc
-                if exc.status not in FREE_MODEL_NOT_FOUND_STATUSES:
+                if exc.status is not None and exc.status not in FREE_MODEL_NOT_FOUND_STATUSES:
                     raise
                 print(f"[llm] model {model!r} unavailable ({exc.status}), trying next")
                 continue
             return stream
-        raise OpenRouterError(f"All configured models failed: {last_error}")
+        return _stream_with_nvidia_fallback(system, user, max_tokens=max_tokens, last_error=last_error)
 
     # ------------------------------------------------------------------ #
     # Internal
     # ------------------------------------------------------------------ #
     def _post(self, path: str, json_body: dict) -> dict:
-        response = self._client.post(path, json=json_body)
+        try:
+            response = self._client.post(path, json=json_body)
+        except httpx.HTTPError as exc:
+            raise OpenRouterError(f"API {path} failed (network error): {exc}", status=None) from exc
         if response.status_code >= 400:
             raise OpenRouterError(
                 f"API {path} failed ({response.status_code}): {response.text[:500]}",
@@ -204,7 +207,12 @@ class OpenAIStream:
             json=self._body,
             timeout=httpx.Timeout(30, read=180),
         )
-        response = cm.__enter__()
+        try:
+            response = cm.__enter__()
+        except httpx.HTTPError as exc:
+            raise OpenRouterError(
+                f"API /chat/completions failed (network error): {exc}", status=None
+            ) from exc
         self._cm = cm
         self._response = response
         if response.status_code >= 400:
@@ -264,9 +272,90 @@ def build_embedder() -> ApiClient:
 
 
 def build_llm() -> ApiClient:
-    """Client for OpenRouter chat completions."""
+    """Client for LLM chat completions (NVIDIA free chat by default)."""
     return ApiClient(
-        api_key=settings.openrouter_api_key,
-        base_url=settings.openrouter_base_url,
-        key_env_var="OPENROUTER_API_KEY",
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        key_env_var="LLM_API_KEY",
     )
+
+
+def _fallback_api_key() -> str:
+    return settings.llm_fallback_api_key or settings.embedding_api_key
+
+
+def build_llm_fallback() -> ApiClient:
+    """Client for the cross-provider chat fallback (e.g. NVIDIA free chat).
+
+    Uses the embedding API key by default so no extra key is required; the
+    endpoint is OpenAI-compatible so the same client logic applies.
+    """
+    return ApiClient(
+        api_key=_fallback_api_key(),
+        base_url=settings.llm_fallback_base_url,
+        key_env_var="LLM_FALLBACK_API_KEY",
+        model=settings.llm_fallback_model,
+    )
+
+
+def _retryable(status: int | None) -> bool:
+    return status is None or status in {429, 500, 502, 503}
+
+
+def _chat_with_nvidia_fallback(
+    system: str, user: str, *, max_tokens: int, last_error: OpenRouterError | None
+) -> str:
+    """Fallback chat completion against the NVIDIA-free endpoint with backoff."""
+    if not _fallback_api_key():
+        raise OpenRouterError(f"All configured models failed: {last_error}")
+    client = build_llm_fallback()
+    model = settings.llm_fallback_model
+    for attempt in range(4):
+        try:
+            data = client._post(
+                "/chat/completions",
+                {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    "max_tokens": max_tokens,
+                    "temperature": 0.2,
+                },
+            )
+            content = data["choices"][0]["message"].get("content")
+            if content and content.strip():
+                return content.strip()
+            raise OpenRouterError(f"Model {model!r} returned an empty response", status=502)
+        except OpenRouterError as exc:
+            last_error = exc
+            if _retryable(exc.status) and attempt < 3:
+                print(f"[llm] fallback model {model!r} retry ({exc.status}, attempt {attempt + 1})")
+                time.sleep(2**attempt * 1.5)
+                continue
+            break
+    raise OpenRouterError(f"All configured models failed: {last_error}")
+
+
+def _stream_with_nvidia_fallback(
+    system: str, user: str, *, max_tokens: int, last_error: OpenRouterError | None
+) -> OpenAIStream:
+    """Fallback streaming completion against the NVIDIA-free endpoint."""
+    if not _fallback_api_key():
+        raise OpenRouterError(f"All configured models failed: {last_error}")
+    client = build_llm_fallback()
+    model = settings.llm_fallback_model
+    for attempt in range(4):
+        stream = OpenAIStream(client._client, model, system, user, max_tokens=max_tokens)
+        try:
+            stream.open()
+        except OpenRouterError as exc:
+            last_error = exc
+            if _retryable(exc.status) and attempt < 3:
+                print(f"[llm] fallback model {model!r} retry ({exc.status}, attempt {attempt + 1})")
+                time.sleep(2**attempt * 1.5)
+                continue
+            break
+        return stream
+    raise OpenRouterError(f"All configured models failed: {last_error}")
