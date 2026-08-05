@@ -22,10 +22,11 @@ async function api(path, options = {}) {
 }
 
 function scrollToBottom(force = false) {
-  const msgs = $("messages");
+  const scroller = $("chat");
+  if (!scroller) return;
   const nearBottom =
-    msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 160;
-  if (force || nearBottom) msgs.scrollTop = msgs.scrollHeight;
+    scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 160;
+  if (force || nearBottom) scroller.scrollTop = scroller.scrollHeight;
 }
 
 /* ------------------------------------------------------------------ */
