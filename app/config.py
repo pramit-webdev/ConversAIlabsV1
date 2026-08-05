@@ -22,7 +22,7 @@ class Settings:
         # OpenRouter (LLM generation, required by the assignment)
         self.openrouter_base_url: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
         self.openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
-        self.llm_model: str = os.getenv("LLM_MODEL", "google/gemma-4-31b-it:free")
+        self.llm_model: str = os.getenv("LLM_MODEL", "openai/gpt-oss-20b:free")
         self.llm_fallback_models: list[str] = _csv(os.getenv("LLM_FALLBACK_MODELS", ""))
 
         # Embeddings (provider-agnostic: nvidia | openrouter | groq)

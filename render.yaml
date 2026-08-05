@@ -10,6 +10,8 @@ services:
     envVars:
       - key: OPENROUTER_API_KEY
         sync: false
+      - key: EMBEDDING_API_KEY
+        sync: false
       - key: QDRANT_URL
         sync: false
       - key: QDRANT_API_KEY
